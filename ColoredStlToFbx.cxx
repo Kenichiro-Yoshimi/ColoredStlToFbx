@@ -6,7 +6,10 @@
 #include <vtkPolyDataNormals.h>
 #include <vtkSmartPointer.h>
 #include <vtkSTLReader.h>
+#include <vtkXMLPolyDataReader.h>
 #include <vtkXMLPolyDataWriter.h>
+
+#include <vtksys/SystemTools.hxx>
 
 #include "Common.h"
 #include <fbxsdk.h>
@@ -14,27 +17,51 @@
 #include <map>
 
 // Function prototypes.
-bool CreateScene(vtkPolyData *pd, FbxScene* pScene);
-FbxNode* CreateMeshWtihMaterials(vtkPolyData *pd, FbxScene* pScene, const char* pName = "FBXObject");
+bool CreateScene(vtkPolyData *pd, FbxScene* pScene, const char* labelName);
+FbxNode* CreateMeshWtihMaterials(vtkPolyData *pd, FbxScene* pScene, const char* labelName, const char* pName="FBXObject");
 void CreateMaterials(FbxScene* pScene, FbxMesh* pMesh, int numLabels);
 
 int main(int argc, char *argv[])
 {
-  if (argc != 3)
+  if (argc < 3)
   {
-    std::cout << "Required parameters: input(*.stl) output(*.fbl)" << std::endl;
+    std::cout << "Required parameters: input(*.stl, *.vtp) output(*.fbl) labelName" << std::endl;
     return EXIT_FAILURE;
   }
 
   std::string inputFileName = argv[1];
   std::string outputFileName = argv[2];
 
-  auto reader = vtkSmartPointer<vtkSTLReader>::New();
-  reader->SetFileName(inputFileName.c_str());
-  reader->ScalarTagsOn();
-  reader->Update();
+  std::string ext = vtksys::SystemTools::GetFilenameLastExtension(inputFileName);
 
-  vtkPolyData* pd = reader->GetOutput();
+  auto pd = vtkSmartPointer<vtkPolyData>::New();
+  std::string labelName = "STLSolidLabeling";
+  if (ext == ".vtp")
+  {
+    if (argc < 4)
+    {
+      std::cerr << "labelName should be specified!" << std::endl;
+      return EXIT_FAILURE;
+    }
+    labelName = argv[3];
+    auto reader = vtkSmartPointer<vtkXMLPolyDataReader>::New();
+    reader->SetFileName(inputFileName.c_str());
+    reader->Update();
+    pd = reader->GetOutput();
+  }
+  else if (ext == ".stl")
+  {
+    auto reader = vtkSmartPointer<vtkSTLReader>::New();
+    reader->SetFileName(inputFileName.c_str());
+    reader->ScalarTagsOn();
+    reader->Update();
+    pd = reader->GetOutput();
+  }
+  else
+  {
+    std::cerr << "Not Supported output extension appears!: " << ext << std::endl;
+    return EXIT_FAILURE;
+  }
 
   FbxManager* lSdkManager = nullptr;
   FbxScene* lScene = nullptr;
@@ -44,7 +71,7 @@ int main(int argc, char *argv[])
   InitializeSdkObjects(lSdkManager, lScene);
 
   // Create the scene.
-  lResult = CreateScene(pd, lScene);
+  lResult = CreateScene(pd, lScene, labelName.c_str());
 
   if (lResult == false)
   {
@@ -70,9 +97,9 @@ int main(int argc, char *argv[])
   return EXIT_SUCCESS;
 }
 
-bool CreateScene(vtkPolyData *pd, FbxScene* pScene)
+bool CreateScene(vtkPolyData *pd, FbxScene* pScene, const char* labelName)
 {
-  FbxNode* lNode = CreateMeshWtihMaterials(pd, pScene);
+  FbxNode* lNode = CreateMeshWtihMaterials(pd, pScene, labelName);
 
   // Build the node tree.
   FbxNode* lRootNode = pScene->GetRootNode();
@@ -82,7 +109,7 @@ bool CreateScene(vtkPolyData *pd, FbxScene* pScene)
 }
 
 // Create mesh with materials.
-FbxNode* CreateMeshWtihMaterials(vtkPolyData *pd, FbxScene* pScene, const char* pName)
+FbxNode* CreateMeshWtihMaterials(vtkPolyData *pd, FbxScene* pScene, const char* labelName, const char* pName)
 {
   FbxMesh* lMesh = FbxMesh::Create(pScene, pName);
 
@@ -132,7 +159,7 @@ FbxNode* CreateMeshWtihMaterials(vtkPolyData *pd, FbxScene* pScene, const char* 
   lMaterialElement->SetReferenceMode(FbxGeometryElement::eIndexToDirect);
 
   // Check labels in vtkPolyData for material
-  vtkFloatArray* labels = dynamic_cast<vtkFloatArray*>(pd->GetCellData()->GetArray("STLSolidLabeling"));
+  auto labels = pd->GetCellData()->GetArray(labelName);
   std::map<int, int> labelToIndex;
   int index = 0;
   for (vtkIdType cId = 0; cId < numCells; ++cId)
